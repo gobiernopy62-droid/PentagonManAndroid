@@ -1,0 +1,192 @@
+# =============================================================================
+#  build-android.yml  PentagonMan
+#  Genera un APK de prueba (sin firma de producción) y un log de consola.
+#
+#  Requisitos en la raíz del repo:
+#    - game.love
+#    - icon.png  (cualquier tamaño; se redimensiona automáticamente)
+#
+#  Triggers:
+#    - Push a main
+#    - Ejecución manual (workflow_dispatch)
+#
+#  Artifacts generados:
+#    - PentagonMan-beta.apk   → instalar en Android con fuentes desconocidas
+#    - build-log.txt          → log completo de todos los pasos del build
+# =============================================================================
+
+name: Build Android APK (Beta)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      # ── 2. Instalar dependencias ─────────────────────────────────────────────
+      - name: Instalar apktool e imagemagick
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y imagemagick apktool 2>&1
+
+      # ── 3. Inicializar log ───────────────────────────────────────────────────
+      - name: Inicializar log de build
+        run: |
+          echo "=============================================" >> build-log.txt
+          echo "  PentagonMan - Build Log (Beta APK)"         >> build-log.txt
+          echo "  Fecha: $(date '+%Y-%m-%d %H:%M:%S UTC')"   >> build-log.txt
+          echo "  Commit: ${{ github.sha }}"                  >> build-log.txt
+          echo "  Branch: ${{ github.ref_name }}"             >> build-log.txt
+          echo "  Runner: ${{ runner.os }}"                   >> build-log.txt
+          echo "=============================================" >> build-log.txt
+          echo ""                                             >> build-log.txt
+
+      # ── 4. Verificar archivos requeridos ─────────────────────────────────────
+      - name: Verificar game.love e icon.png
+        run: |
+          echo "[ PASO 1 ] Verificando archivos requeridos..." | tee -a build-log.txt
+          echo "-------------------------------------------"   >> build-log.txt
+
+          ERROR=0
+
+          if [ -f "game.love" ] && [ -s "game.love" ]; then
+            echo "  -> game.love encontrado. OK ($(du -sh game.love | cut -f1))" >> build-log.txt
+          else
+            echo "  -> ERROR: game.love no existe o está vacío." >> build-log.txt
+            ERROR=1
+          fi
+
+          if [ -f "icon.png" ] && [ -s "icon.png" ]; then
+            echo "  -> icon.png encontrado. OK ($(du -sh icon.png | cut -f1))" >> build-log.txt
+          else
+            echo "  -> ADVERTENCIA: icon.png no encontrado. Se usará el ícono por defecto de LÖVE." >> build-log.txt
+          fi
+
+          echo "" >> build-log.txt
+          [ $ERROR -eq 1 ] && exit 1 || true
+
+      # ── 5. Descargar APK base de LÖVE 11.4 ──────────────────────────────────
+      - name: Descargar APK base de LÖVE 11.4
+        run: |
+          echo "[ PASO 2 ] Descargando APK base de LÖVE 11.4..." | tee -a build-log.txt
+          echo "-------------------------------------------"      >> build-log.txt
+
+          wget -v \
+            https://github.com/love2d/love/releases/download/11.4/love-11.4-android.apk \
+            -O love-base.apk \
+            2>&1 | tee -a build-log.txt
+
+          echo ""                                                             >> build-log.txt
+          echo "  -> love-base.apk descargado. ($(du -sh love-base.apk | cut -f1))" >> build-log.txt
+          echo ""                                                             >> build-log.txt
+
+      # ── 6. Reemplazar ícono ──────────────────────────────────────────────────
+      - name: Reemplazar ícono en el APK
+        run: |
+          echo "[ PASO 3 ] Reemplazando ícono..." | tee -a build-log.txt
+          echo "-------------------------------------------"    >> build-log.txt
+
+          if [ ! -f "icon.png" ]; then
+            echo "  -> Sin icon.png, se omite este paso."       >> build-log.txt
+            cp love-base.apk love-iconic.apk
+          else
+            # Descompilar el APK con apktool
+            echo "  -> Descompilando APK con apktool..."        >> build-log.txt
+            apktool d love-base.apk -o love-decoded --no-src 2>&1 | tee -a build-log.txt
+
+            # Redimensionar icon.png a cada densidad de pantalla
+            # El ícono en LÖVE se llama love.png dentro de drawable-*
+            echo ""                                             >> build-log.txt
+            echo "  -> Redimensionando ícono para cada densidad..." >> build-log.txt
+
+            declare -A SIZES=(
+              ["drawable-mdpi"]=48
+              ["drawable-hdpi"]=72
+              ["drawable-xhdpi"]=96
+              ["drawable-xxhdpi"]=144
+              ["drawable-xxxhdpi"]=192
+            )
+
+            for FOLDER in "${!SIZES[@]}"; do
+              SIZE=${SIZES[$FOLDER]}
+              TARGET="love-decoded/res/$FOLDER/love.png"
+              if [ -d "love-decoded/res/$FOLDER" ]; then
+                convert icon.png -resize ${SIZE}x${SIZE} "$TARGET" 2>&1 | tee -a build-log.txt
+                echo "  -> $FOLDER/love.png → ${SIZE}x${SIZE}px OK" >> build-log.txt
+              else
+                echo "  -> $FOLDER no existe en este APK, omitiendo." >> build-log.txt
+              fi
+            done
+
+            # Recompilar el APK con apktool
+            echo ""                                             >> build-log.txt
+            echo "  -> Recompilando APK..."                    >> build-log.txt
+            apktool b love-decoded -o love-iconic.apk 2>&1 | tee -a build-log.txt
+
+            echo ""                                             >> build-log.txt
+            echo "  -> Ícono reemplazado correctamente."       >> build-log.txt
+          fi
+
+          echo ""                                              >> build-log.txt
+
+      # ── 7. Fusionar game.love + APK ──────────────────────────────────────────
+      - name: Fusionar game.love con APK
+        run: |
+          echo "[ PASO 4 ] Fusionando game.love + APK..." | tee -a build-log.txt
+          echo "-------------------------------------------"  >> build-log.txt
+
+          cat love-iconic.apk game.love > PentagonMan-beta.apk
+
+          echo "  -> Fusion completada. ($(du -sh PentagonMan-beta.apk | cut -f1))" >> build-log.txt
+          echo ""                                                                    >> build-log.txt
+
+      # ── 8. Verificar integridad del APK ─────────────────────────────────────
+      - name: Verificar integridad del APK
+        run: |
+          echo "[ PASO 5 ] Verificando integridad del APK..." | tee -a build-log.txt
+          echo "-------------------------------------------"   >> build-log.txt
+
+          if [ -f "PentagonMan-beta.apk" ] && [ -s "PentagonMan-beta.apk" ]; then
+            echo "  -> APK encontrado y no vacío. OK"          >> build-log.txt
+          else
+            echo "  -> ERROR: El APK no existe o está vacío."  >> build-log.txt
+            exit 1
+          fi
+
+          echo ""                                              >> build-log.txt
+          echo "  Contenido interno del APK:"                 >> build-log.txt
+          unzip -l PentagonMan-beta.apk 2>&1 | tee -a build-log.txt
+          echo ""                                             >> build-log.txt
+
+      # ── 9. Resumen final del log ─────────────────────────────────────────────
+      - name: Escribir resumen final en el log
+        run: |
+          echo "=============================================" >> build-log.txt
+          echo "  BUILD COMPLETADO EXITOSAMENTE"              >> build-log.txt
+          echo "  Fin: $(date '+%Y-%m-%d %H:%M:%S UTC')"     >> build-log.txt
+          echo "=============================================" >> build-log.txt
+
+      # ── 10. Subir APK como artifact ──────────────────────────────────────────
+      - name: Subir APK como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PentagonMan-beta
+          path: PentagonMan-beta.apk
+          retention-days: 7
+
+      # ── 11. Subir log como artifact ──────────────────────────────────────────
+      - name: Subir log de build como artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build-log.txt
+          retention-days: 7
