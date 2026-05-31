@@ -32,10 +32,10 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Instalar dependencias ─────────────────────────────────────────────
-      - name: Instalar apktool e imagemagick
+      - name: Instalar imagemagick
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y imagemagick apktool 2>&1
+          sudo apt-get install -y imagemagick 2>&1
 
       # ── 3. Inicializar log ───────────────────────────────────────────────────
       - name: Inicializar log de build
@@ -84,11 +84,11 @@ jobs:
             -O love-base.apk \
             2>&1 | tee -a build-log.txt
 
-          echo ""                                                             >> build-log.txt
+          echo ""                                                                     >> build-log.txt
           echo "  -> love-base.apk descargado. ($(du -sh love-base.apk | cut -f1))" >> build-log.txt
-          echo ""                                                             >> build-log.txt
+          echo ""                                                                     >> build-log.txt
 
-      # ── 6. Reemplazar ícono ──────────────────────────────────────────────────
+      # ── 6. Reemplazar ícono directamente en el ZIP (sin apktool) ─────────────
       - name: Reemplazar ícono en el APK
         run: |
           echo "[ PASO 3 ] Reemplazando ícono..." | tee -a build-log.txt
@@ -98,39 +98,45 @@ jobs:
             echo "  -> Sin icon.png, se omite este paso."       >> build-log.txt
             cp love-base.apk love-iconic.apk
           else
-            # Descompilar el APK con apktool
-            echo "  -> Descompilando APK con apktool..."        >> build-log.txt
-            apktool d love-base.apk -o love-decoded --no-src 2>&1 | tee -a build-log.txt
+            cp love-base.apk love-iconic.apk
 
-            # Redimensionar icon.png a cada densidad de pantalla
-            # El ícono en LÖVE se llama love.png dentro de drawable-*
-            echo ""                                             >> build-log.txt
-            echo "  -> Redimensionando ícono para cada densidad..." >> build-log.txt
+            # Ver qué carpetas drawable existen dentro del APK
+            echo "  -> Carpetas drawable encontradas en el APK:" >> build-log.txt
+            unzip -l love-iconic.apk | grep "drawable" | grep "love.png" | tee -a build-log.txt
 
+            # Redimensionar y reemplazar love.png en cada densidad
             declare -A SIZES=(
-              ["drawable-mdpi"]=48
-              ["drawable-hdpi"]=72
-              ["drawable-xhdpi"]=96
-              ["drawable-xxhdpi"]=144
-              ["drawable-xxxhdpi"]=192
+              ["res/drawable-mdpi/love.png"]=48
+              ["res/drawable-hdpi/love.png"]=72
+              ["res/drawable-xhdpi/love.png"]=96
+              ["res/drawable-xxhdpi/love.png"]=144
+              ["res/drawable-xxxhdpi/love.png"]=192
             )
 
-            for FOLDER in "${!SIZES[@]}"; do
-              SIZE=${SIZES[$FOLDER]}
-              TARGET="love-decoded/res/$FOLDER/love.png"
-              if [ -d "love-decoded/res/$FOLDER" ]; then
-                convert icon.png -resize ${SIZE}x${SIZE} "$TARGET" 2>&1 | tee -a build-log.txt
-                echo "  -> $FOLDER/love.png → ${SIZE}x${SIZE}px OK" >> build-log.txt
+            mkdir -p icon_tmp
+
+            for PATH_IN_APK in "${!SIZES[@]}"; do
+              SIZE=${SIZES[$PATH_IN_APK]}
+              FOLDER=$(dirname "$PATH_IN_APK")
+              FILENAME=$(basename "$PATH_IN_APK")
+
+              # Verificar que esa ruta existe dentro del APK antes de intentar reemplazarla
+              if unzip -l love-iconic.apk | grep -q "$PATH_IN_APK"; then
+                mkdir -p "icon_tmp/$FOLDER"
+                convert icon.png -resize ${SIZE}x${SIZE} "icon_tmp/$PATH_IN_APK" 2>&1 | tee -a build-log.txt
+
+                # Reemplazar el archivo dentro del ZIP sin recompilar nada
+                cd icon_tmp
+                zip -f ../love-iconic.apk "$PATH_IN_APK" 2>&1 | tee -a ../build-log.txt
+                cd ..
+
+                echo "  -> $PATH_IN_APK → ${SIZE}x${SIZE}px OK" >> build-log.txt
               else
-                echo "  -> $FOLDER no existe en este APK, omitiendo." >> build-log.txt
+                echo "  -> $PATH_IN_APK no existe en el APK, omitiendo." >> build-log.txt
               fi
             done
 
-            # Recompilar el APK con apktool
-            echo ""                                             >> build-log.txt
-            echo "  -> Recompilando APK..."                    >> build-log.txt
-            apktool b love-decoded -o love-iconic.apk 2>&1 | tee -a build-log.txt
-
+            rm -rf icon_tmp
             echo ""                                             >> build-log.txt
             echo "  -> Ícono reemplazado correctamente."       >> build-log.txt
           fi
