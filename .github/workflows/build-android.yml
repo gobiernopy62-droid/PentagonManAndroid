@@ -137,24 +137,38 @@ jobs:
 
           echo ""                                              >> build-log.txt
 
-      # ── 7. Fusionar game.love + APK ──────────────────────────────────────────
+      # ── 7. Zipalign ANTES del cat ────────────────────────────────────────────
+      # El zipalign debe hacerse sobre el APK base limpio ANTES de fusionar
+      # con game.love, porque el cat produce un ZIP que zipalign no reconoce.
+      - name: Zipalign el APK base
+        run: |
+          echo "[ PASO 4 ] Zipalign del APK base..." | tee -a build-log.txt
+          echo "-------------------------------------------"   >> build-log.txt
+
+          zipalign -v 4 love-iconic.apk love-aligned.apk \
+            2>&1 | tee -a build-log.txt
+
+          echo "  -> Zipalign completado. ($(du -sh love-aligned.apk | cut -f1))" >> build-log.txt
+          echo ""                                                                  >> build-log.txt
+
+      # ── 8. Fusionar game.love + APK alineado ─────────────────────────────────
       - name: Fusionar game.love con APK
         run: |
-          echo "[ PASO 4 ] Fusionando game.love + APK..." | tee -a build-log.txt
+          echo "[ PASO 5 ] Fusionando game.love + APK..." | tee -a build-log.txt
           echo "-------------------------------------------"  >> build-log.txt
 
-          cat love-iconic.apk game.love > PentagonMan-unsigned.apk
+          cat love-aligned.apk game.love > PentagonMan-unsigned.apk
 
           echo "  -> Fusion completada. ($(du -sh PentagonMan-unsigned.apk | cut -f1))" >> build-log.txt
           echo ""                                                                        >> build-log.txt
 
-      # ── 8. Generar keystore debug y firmar el APK ────────────────────────────
+      # ── 9. Firmar el APK con firma debug ─────────────────────────────────────
       - name: Firmar APK con firma debug
         run: |
-          echo "[ PASO 5 ] Generando keystore debug y firmando APK..." | tee -a build-log.txt
+          echo "[ PASO 6 ] Generando keystore debug y firmando APK..." | tee -a build-log.txt
           echo "-------------------------------------------"             >> build-log.txt
 
-          # Generar un keystore debug desechable (solo para beta)
+          # Generar keystore debug desechable (solo para beta)
           keytool -genkey -v \
             -keystore debug.keystore \
             -alias androiddebugkey \
@@ -169,30 +183,24 @@ jobs:
           echo "" >> build-log.txt
           echo "  -> Keystore debug generado." >> build-log.txt
 
-          # Zipalign ANTES de firmar (requisito de Android)
-          zipalign -v 4 PentagonMan-unsigned.apk PentagonMan-aligned.apk \
-            2>&1 | tee -a build-log.txt
-
-          echo "  -> Zipalign completado." >> build-log.txt
-
-          # Firmar con apksigner
+          # Firmar con apksigner (el APK ya viene alineado del paso anterior)
           apksigner sign \
             --ks debug.keystore \
             --ks-pass pass:android \
             --key-pass pass:android \
             --ks-key-alias androiddebugkey \
             --out PentagonMan-beta.apk \
-            PentagonMan-aligned.apk \
+            PentagonMan-unsigned.apk \
             2>&1 | tee -a build-log.txt
 
           echo "" >> build-log.txt
-          echo "  -> APK firmado correctamente. ($(du -sh PentagonMan-beta.apk | cut -f1))" >> build-log.txt
+          echo "  -> APK firmado. ($(du -sh PentagonMan-beta.apk | cut -f1))" >> build-log.txt
           echo "" >> build-log.txt
 
-      # ── 9. Verificar integridad del APK ─────────────────────────────────────
+      # ── 10. Verificar integridad y firma del APK ─────────────────────────────
       - name: Verificar integridad del APK
         run: |
-          echo "[ PASO 6 ] Verificando integridad del APK..." | tee -a build-log.txt
+          echo "[ PASO 7 ] Verificando integridad del APK..." | tee -a build-log.txt
           echo "-------------------------------------------"   >> build-log.txt
 
           if [ -f "PentagonMan-beta.apk" ] && [ -s "PentagonMan-beta.apk" ]; then
@@ -202,12 +210,10 @@ jobs:
             exit 1
           fi
 
-          # Verificar la firma
           apksigner verify --verbose PentagonMan-beta.apk 2>&1 | tee -a build-log.txt
-
           echo ""                                              >> build-log.txt
 
-      # ── 10. Resumen final del log ────────────────────────────────────────────
+      # ── 11. Resumen final del log ────────────────────────────────────────────
       - name: Escribir resumen final en el log
         run: |
           echo "=============================================" >> build-log.txt
@@ -215,7 +221,7 @@ jobs:
           echo "  Fin: $(date '+%Y-%m-%d %H:%M:%S UTC')"     >> build-log.txt
           echo "=============================================" >> build-log.txt
 
-      # ── 11. Subir APK como artifact ──────────────────────────────────────────
+      # ── 12. Subir APK como artifact ──────────────────────────────────────────
       - name: Subir APK como artifact
         uses: actions/upload-artifact@v4
         with:
@@ -223,7 +229,7 @@ jobs:
           path: PentagonMan-beta.apk
           retention-days: 7
 
-      # ── 12. Subir log como artifact ──────────────────────────────────────────
+      # ── 13. Subir log como artifact ──────────────────────────────────────────
       - name: Subir log de build como artifact
         if: always()
         uses: actions/upload-artifact@v4
