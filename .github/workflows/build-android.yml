@@ -1,9 +1,9 @@
 # =============================================================================
-#  build-android.yml  PentagonMan
-#  Genera un APK de prueba con firma debug y un log de consola.
+#  build-android.yml - PentagonMan (Edición Lanzamiento Oficial)
+#  Compila el código fuente nativo de LÖVE inyectando recursos y juego.
 # =============================================================================
 
-name: Build Android APK (Beta)
+name: Build Android APK (Release)
 
 on:
   push:
@@ -15,159 +15,76 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
-      - name: Checkout del repositorio
+      # ── 1. Descargar el Repositorio ──────────────────────────────────────────
+      - name: Checkout del proyecto
         uses: actions/checkout@v4
+        with:
+          submodules: 'recursive' # Asegura traer dependencias nativas de LÖVE si existen
 
-      # ── 2. Instalar dependencias ─────────────────────────────────────────────
-      - name: Instalar dependencias
+      # ── 2. Configurar Java (Requerido por el compilador de Android) ──────────
+      - name: Configurar Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # ── 3. Configurar Android SDK ────────────────────────────────────────────
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      # ── 4. Inyectar tu juego (game.love) en el código nativo ─────────────────
+      - name: Preparar assets del juego
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y imagemagick zipalign apksigner zip unzip 2>&1
+          echo "Inyectando game.love en los assets del proyecto..."
+          mkdir -p app/src/main/assets
+          cp game.love app/src/main/assets/game.love
 
-      # ── 3. Inicializar log ───────────────────────────────────────────────────
-      - name: Inicializar log de build
+      # ── 5. Reemplazar Íconos e ID del Juego Automáticamente ──────────────────
+      - name: Personalizar Identidad de PentagonMan
         run: |
-          echo "=============================================" >> build-log.txt
-          echo "  PentagonMan - Build Log (Beta APK)"         >> build-log.txt
-          echo "  Fecha: $(date '+%Y-%m-%d %H:%M:%S UTC')"   >> build-log.txt
-          echo "  Commit: ${{ github.sha }}"                  >> build-log.txt
-          echo "  Branch: ${{ github.ref_name }}"             >> build-log.txt
-          echo "  Runner: ${{ runner.os }}"                   >> build-log.txt
-          echo "=============================================" >> build-log.txt
-          echo ""                                             >> build-log.txt
-
-      # ── 4. Verificar archivos requeridos ─────────────────────────────────────
-      - name: Verificar game.love e icon.png
-        run: |
-          echo "[ PASO 1 ] Verificando archivos requeridos..." | tee -a build-log.txt
-          echo "-------------------------------------------"   >> build-log.txt
-
-          ERROR=0
-
-          if [ -f "game.love" ] && [ -s "game.love" ]; then
-            echo "  -> game.love encontrado. OK ($(du -sh game.love | cut -f1))" >> build-log.txt
-          else
-            echo "  -> ERROR: game.love no existe o está vacío." >> build-log.txt
-            ERROR=1
-          fi
-
-          if [ -f "icon.png" ] && [ -s "icon.png" ]; then
-            echo "  -> icon.png encontrado. OK ($(du -sh icon.png | cut -f1))" >> build-log.txt
-          else
-            echo "  -> ADVERTENCIA: icon.png no encontrado. Se usará el ícono por defecto." >> build-log.txt
-          fi
-
-          echo "" >> build-log.txt
-          [ $ERROR -eq 1 ] && exit 1 || true
-
-      # ── 5. Descargar APK base de LÖVE 11.4 ──────────────────────────────────
-      - name: Descargar APK base de LÖVE 11.4
-        run: |
-          echo "[ PASO 2 ] Descargando APK base..." | tee -a build-log.txt
-          echo "-------------------------------------------" >> build-log.txt
-
-          wget -q -O love-base.apk https://github.com/love2d/love/releases/download/11.4/love-11.4-android.apk
+          echo "Configurando nombre e íconos oficiales..."
           
-          echo "  -> love-base.apk descargado. ($(du -sh love-base.apk | cut -f1))" >> build-log.txt
-          echo "" >> build-log.txt
+          # Reemplazar el nombre de la app de "LÖVE" a "PentagonMan"
+          # Modifica el archivo de textos de Android
+          SED_TARGET="app/src/main/res/values/strings.xml"
+          if [ -f "$SED_TARGET" ]; then
+            sed -i 's/name="app_name">LÖVE/name="app_name">PentagonMan/g' "$SED_TARGET"
+          fi
 
-      # ── 6. Reemplazar ícono Dinámicamente (Versión Robusta con Python) ────────
-      - name: Reemplazar ícono en el APK
-        run: |
-          echo "[ PASO 3 ] Reemplazando ícono..." | tee -a build-log.txt
-          echo "-------------------------------------------" >> build-log.txt
-
-          cp love-base.apk love-iconic.apk
-
+          # Copiar tu icon.png a las carpetas del compilador si existe
           if [ -f "icon.png" ]; then
-            mkdir -p icon_tmp
+            # El código de LÖVE maneja el ícono principal como ic_launcher.png
+            # Lo copiamos a la carpeta base de recursos de la app
+            mkdir -p app/src/main/res/drawable
+            cp icon.png app/src/main/res/drawable/ic_launcher.png
             
-            # Buscar todos los íconos de LÖVE dentro del APK de forma segura
-            ICON_PATHS=$(unzip -l love-iconic.apk | awk '{print $4}' | grep '^res/.*\.png$' | grep -iE 'love\.png|ic_launcher\.png' || true)
-            
-            if [ -z "$ICON_PATHS" ]; then
-              echo "  -> No se detectaron íconos modificables en las rutas res/ estándar." >> build-log.txt
-            else
-              for path in $ICON_PATHS; do
-                # Extraer ícono original
-                unzip -p love-iconic.apk "$path" > temp_icon.png 2>/dev/null || continue
-                
-                # Obtener dimensiones usando un script rápido de Python integrado en lugar de 'identify'
-                DIMENSIONS=$(python3 -c "
-                import struct
-                with open('temp_icon.png', 'rb') as f:
-                    data = f.read(24)
-                    if data[:8] == b'\x89PNG\r\n\x1a\n' and data[12:16] == b'IHDR':
-                        w, h = struct.unpack('>II', data[16:24])
-                        print(f'{w}x{h}')
-                    else:
-                        print('144x144') # Valor por defecto seguro si falla la lectura
-                " 2>/dev/null || echo "144x144")
-
-                # Crear estructura de carpetas y redimensionar nuestro ícono
-                mkdir -p "icon_tmp/$(dirname "$path")"
-                convert icon.png -resize $DIMENSIONS "icon_tmp/$path" 2>/dev/null || continue
-                
-                # Meter el ícono redimensionado de vuelta al APK
-                cd icon_tmp
-                zip -u ../love-iconic.apk "$path" > /dev/null 2>&1
-                cd ..
-                
-                echo "  -> Reemplazado con éxito: $path ($DIMENSIONS)" >> build-log.txt
-              done
-            fi
-            
-            rm -rf icon_tmp temp_icon.png 2>/dev/null
-            echo "  -> Proceso de íconos finalizado." >> build-log.txt
-          else
-            echo "  -> Sin icon.png, se omite este paso." >> build-log.txt
+            # Forzar el reemplazo en los directorios mipmap redundantes
+            for dir in app/src/main/res/mipmap-*; do
+              if [ -d "$dir" ]; then
+                cp icon.png "$dir/ic_launcher.png"
+                cp icon.png "$dir/ic_launcher_round.png" 2>/dev/null || true
+              fi
+            done
           fi
-          echo "" >> build-log.txt
 
-      # ── 7. Insertar game.love (Formato Nivel Cero) ───────────────────────────
-      - name: Insertar game.love en el APK
+      # ── 6. Dar permisos de ejecución al compilador Gradle ────────────────────
+      - name: Permisos para Gradle
+        run: chmod +x gradlew
+
+      # ── 7. Compilar el APK con Gradle (Modo Ensamblado) ──────────────────────
+      - name: Compilar APK con Gradle
+        run: ./gradlew assembleEmbedNoRecordRelease
+
+      # ── 8. Alinear y Firmar el APK Resultante ────────────────────────────────
+      - name: Firmar APK para pruebas masivas
         run: |
-          echo "[ PASO 4 ] Insertando game.love..." | tee -a build-log.txt
-          echo "-------------------------------------------" >> build-log.txt
-
-          cp love-iconic.apk love-with-game.apk
+          # Encontrar el APK generado por Gradle
+          RAW_APK=$(find app/build/outputs/apk/ -name "*.apk" | head -n 1)
           
-          # Crear la carpeta assets estructurada para Android
-          mkdir -p assets
-          cp game.love assets/game.love
-          
-          # Se inserta de manera cruda (-0) para garantizar que Zipalign funcione
-          zip -0 -u love-with-game.apk assets/game.love > /dev/null
+          echo "Alineando el APK generado en: $RAW_APK"
+          zipalign -f -p -v 4 "$RAW_APK" love-aligned.apk > /dev/null
 
-          echo "  -> game.love insertado en assets/game.love." >> build-log.txt
-          echo "  -> Tamaño resultante: $(du -sh love-with-game.apk | cut -f1)" >> build-log.txt
-          echo "" >> build-log.txt
-
-      # ── 8. Zipalign (Alineación a 4-bytes) ───────────────────────────────────
-      - name: Zipalign
-        run: |
-          echo "[ PASO 5 ] Zipalign..." | tee -a build-log.txt
-          echo "-------------------------------------------" >> build-log.txt
-
-          # -p alinea las páginas de memoria (indispensable para Android moderno)
-          zipalign -f -p -v 4 love-with-game.apk love-aligned.apk > zipalign_output.txt 2>&1
-          
-          if grep -q "Verification FAILED" zipalign_output.txt; then
-            echo "  -> ERROR: Falló la verificación de Zipalign." >> build-log.txt
-            cat zipalign_output.txt >> build-log.txt
-            exit 1
-          else
-            echo "  -> Zipalign completado y verificado. OK" >> build-log.txt
-          fi
-          echo "" >> build-log.txt
-
-      # ── 9. Firmar el APK con firma debug ─────────────────────────────────────
-      - name: Firmar APK con firma debug
-        run: |
-          echo "[ PASO 6 ] Firmando APK..." | tee -a build-log.txt
-          echo "-------------------------------------------" >> build-log.txt
-
+          echo "Generando clave de firmado temporal..."
           keytool -genkey -v \
             -keystore debug.keystore \
             -alias androiddebugkey \
@@ -176,42 +93,23 @@ jobs:
             -validity 365 \
             -storepass android \
             -keypass android \
-            -dname "CN=Android Debug, O=Android, C=US" > /dev/null 2>&1
+            -dname "CN=Android Debug, O=Android, C=US" > /dev/null
 
-          echo "  -> Keystore debug generado." >> build-log.txt
-
+          echo "Firmando APK final..."
           apksigner sign \
             --ks debug.keystore \
             --ks-pass pass:android \
             --key-pass pass:android \
             --ks-key-alias androiddebugkey \
-            --out PentagonMan-beta.apk \
-            love-aligned.apk > /dev/null 2>&1
+            --out PentagonMan-Lanzamiento.apk \
+            love-aligned.apk
 
-          echo "  -> APK firmado exitosamente. ($(du -sh PentagonMan-beta.apk | cut -f1))" >> build-log.txt
-          echo "" >> build-log.txt
+          echo "¡Proceso terminado con éxito!"
 
-      # ── 10. Resumen final ────────────────────────────────────────────────────
-      - name: Resumen final
-        run: |
-          echo "=============================================" >> build-log.txt
-          echo "  BUILD COMPLETADO EXITOSAMENTE"              >> build-log.txt
-          echo "  Fin: $(date '+%Y-%m-%d %H:%M:%S UTC')"     >> build-log.txt
-          echo "=============================================" >> build-log.txt
-
-      # ── 11. Subir APK como artifact ──────────────────────────────────────────
-      - name: Subir APK
+      # ── 9. Guardar y Exportar el APK final de PentagonMan ───────────────────
+      - name: Subir APK Final
         uses: actions/upload-artifact@v4
         with:
-          name: PentagonMan-beta
-          path: PentagonMan-beta.apk
-          retention-days: 7
-
-      # ── 12. Subir log como artifact ──────────────────────────────────────────
-      - name: Subir Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build-log.txt
+          name: PentagonMan-Lanzamiento-APK
+          path: PentagonMan-Lanzamiento.apk
           retention-days: 7
