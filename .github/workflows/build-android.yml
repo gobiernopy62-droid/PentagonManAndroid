@@ -1,5 +1,5 @@
 # =============================================================================
-#  build-android.yml - PentagonMan (Edición Sintaxis Corregida)
+#  build-android.yml - PentagonMan (Edición Rama Master de LÖVE)
 # =============================================================================
 
 name: Build Android APK (Release)
@@ -14,21 +14,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Descargar tu Repositorio y el Megasource de LÖVE (Vía ZIP) ────────
+      # ── 1. Descargar tu Repositorio y el Megasource de LÖVE (Vía ZIP Master) ──
       - name: Checkout del proyecto
         uses: actions/checkout@v4
 
-      # Descargar la carpeta megasource mediante descarga directa para evitar bloqueos de git
       - name: Descargar dependencias nativas (Megasource ZIP)
         run: |
-          echo "Descargando megasource comprimido oficial de LÖVE2D..."
-          curl -L https://github.com/love2d/love-android-megasource/archive/refs/heads/main.zip -o megasource.zip
+          echo "Descargando megasource comprimido oficial de LÖVE2D (Rama Master)..."
+          curl -L https://github.com/love2d/love-android-megasource/archive/refs/heads/master.zip -o megasource.zip
           
           echo "Descomprimiendo archivos..."
           unzip -q megasource.zip
           
           echo "Acomodando estructura de carpetas..."
-          mv love-android-megasource-main megasource
+          # Como bajamos la rama master, la carpeta descomprimida termina en '-master'
+          mv love-android-megasource-master megasource
           
           echo "Limpiando archivos temporales..."
           rm megasource.zip
