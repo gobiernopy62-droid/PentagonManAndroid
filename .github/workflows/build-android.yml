@@ -1,5 +1,5 @@
 # =============================================================================
-#  build-android.yml - PentagonMan (Edición Reparación Megasource)
+#  build-android.yml - PentagonMan (Edición Descarga Directa ZIP)
 # =============================================================================
 
 name: Build Android APK (Release)
@@ -14,15 +14,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Descargar Repositorio y Forzar Megasource de LÖVE ─────────────────
+      # ── 1. Descargar tu Repositorio y el Megasource de LÖVE (Vía ZIP) ────────
       - name: Checkout del proyecto
         uses: actions/checkout@v4
 
-      - name: Descargar dependencias nativas (Megasource)
+       Cavar la carpeta megasource mediante descarga directa para evitar bloqueos de git
+      - name: Descargar dependencias nativas (Megasource ZIP)
         run: |
-          echo "Clonando megasource oficial de LÖVE2D..."
-          # Clonamos el megasource en la raíz del proyecto para solucionar el error de CMake
-          git clone --depth 1 https://github.com/love2d/love-android-megasource.git megasource
+          echo "Descargando megasource comprimido oficial de LÖVE2D..."
+          curl -L https://github.com/love2d/love-android-megasource/archive/refs/heads/main.zip -o megasource.zip
+          
+          echo "Descomprimiendo archivos..."
+          unzip -q megasource.zip
+          
+          echo "Acomodando estructura de carpetas..."
+          # GitHub comprime la carpeta como 'love-android-megasource-main', la renombramos al estándar
+          mv love-android-megasource-main megasource
+          
+          echo "Limpiando archivos temporales..."
+          rm megasource.zip
 
       # ── 2. Configurar Java ───────────────────────────────────────────────────
       - name: Configurar Java JDK 17
@@ -77,7 +87,6 @@ jobs:
       # ── 7. Compilar el APK con Gradle ────────────────────────────────────────
       - name: Compilar APK con Gradle
         run: |
-          # Compilamos saltándonos los chequeos estéticos (lint)
           ./gradlew assembleEmbedNoRecordRelease -x lint > gradle_build_output.txt 2>&1
 
       # ── 8. Alinear y Firmar el APK Resultante ────────────────────────────────
