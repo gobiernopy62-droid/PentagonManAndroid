@@ -1,6 +1,5 @@
 # =============================================================================
-#  build-android.yml - PentagonMan (Edición Lanzamiento Oficial Corregida)
-#  Compila el código fuente nativo de LÖVE inyectando recursos y juego.
+#  build-android.yml - PentagonMan (Edición Reparación Megasource)
 # =============================================================================
 
 name: Build Android APK (Release)
@@ -15,25 +14,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Descargar el Repositorio ──────────────────────────────────────────
+      # ── 1. Descargar Repositorio y Forzar Megasource de LÖVE ─────────────────
       - name: Checkout del proyecto
         uses: actions/checkout@v4
-        with:
-          submodules: 'recursive' # Trae submódulos nativos si existen
 
-      # ── 2. Configurar Java (Clave para Gradle moderno) ───────────────────────
+      - name: Descargar dependencias nativas (Megasource)
+        run: |
+          echo "Clonando megasource oficial de LÖVE2D..."
+          # Clonamos el megasource en la raíz del proyecto para solucionar el error de CMake
+          git clone --depth 1 https://github.com/love2d/love-android-megasource.git megasource
+
+      # ── 2. Configurar Java ───────────────────────────────────────────────────
       - name: Configurar Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle' # Optimiza y acelera las descargas de Gradle
+          cache: 'gradle'
 
       # ── 3. Configurar Android SDK ────────────────────────────────────────────
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── 4. Inyectar tu juego (game.love) en el código nativo ─────────────────
+      # ── 4. Inyectar tu juego (game.love) ─────────────────────────────────────
       - name: Preparar assets del juego
         run: |
           echo "Inyectando game.love en los assets del proyecto..."
@@ -44,20 +47,15 @@ jobs:
             echo "ERROR: No se encontró game.love en la raíz" && exit 1
           fi
 
-      # ── 5. Reemplazar Íconos e ID del Juego Automáticamente ──────────────────
+      # ── 5. Personalizar Identidad de PentagonMan ──────────────────────────────
       - name: Personalizar Identidad de PentagonMan
         run: |
           echo "Configurando nombre e íconos oficiales..."
-          
-          # Cambiar el nombre de la app en los recursos de Android
           SED_TARGET="app/src/main/res/values/strings.xml"
           if [ -f "$SED_TARGET" ]; then
             sed -i 's/name="app_name">LÖVE/name="app_name">PentagonMan/g' "$SED_TARGET"
-          else
-            echo "Advertencia: strings.xml no encontrado en la ruta esperada."
           fi
 
-          # Copiar tu icon.png a las carpetas del compilador
           if [ -f "icon.png" ]; then
             mkdir -p app/src/main/res/drawable
             cp icon.png app/src/main/res/drawable/ic_launcher.png
@@ -70,16 +68,16 @@ jobs:
             done
           fi
 
-      # ── 6. Dar permisos y Limpiar Proyecto ───────────────────────────────────
+      # ── 6. Permisos y Limpieza de Gradle ─────────────────────────────────────
       - name: Permisos y Limpieza de Gradle
         run: |
           chmod +x gradlew
           ./gradlew clean
 
-      # ── 7. Compilar el APK con Gradle (Con bypass de advertencias) ───────────
+      # ── 7. Compilar el APK con Gradle ────────────────────────────────────────
       - name: Compilar APK con Gradle
         run: |
-          # -x lint evita que el compilador se detenga por alertas de diseño o traducción
+          # Compilamos saltándonos los chequeos estéticos (lint)
           ./gradlew assembleEmbedNoRecordRelease -x lint > gradle_build_output.txt 2>&1
 
       # ── 8. Alinear y Firmar el APK Resultante ────────────────────────────────
@@ -112,9 +110,9 @@ jobs:
             --out PentagonMan-Lanzamiento.apk \
             love-aligned.apk
 
-      # ── 9. Subir Reporte de Consola (SIEMPRE se ejecutará si hay error) ──────
+      # ── 9. Guardar Reporte de Errores de Gradle (Solo si falla) ──────────────
       - name: Guardar Reporte de Errores de Gradle
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: Reporte-Compilacion-Gradle
