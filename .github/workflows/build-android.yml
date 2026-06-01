@@ -1,5 +1,5 @@
 # =============================================================================
-#  build-android.yml - PentagonMan (Edición Compilación Aislada Profesional)
+#  build-android.yml - PentagonMan (Edición Final: Rutas de SDK Arregladas)
 # =============================================================================
 
 name: Build Android APK (Release)
@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: love2d/love-android
-          submodules: recursive  # Esto descarga megasource de forma nativa y perfecta
+          submodules: recursive
           path: love-android-src
 
       # ── 3. Configurar Java ───────────────────────────────────────────────────
@@ -57,13 +57,11 @@ jobs:
         run: |
           echo "Configurando nombre e íconos oficiales..."
           
-          # Cambiar el nombre de la app de LÖVE a PentagonMan
           SED_TARGET="love-android-src/app/src/main/res/values/strings.xml"
           if [ -f "$SED_TARGET" ]; then
             sed -i 's/name="app_name">LÖVE/name="app_name">PentagonMan/g' "$SED_TARGET"
           fi
 
-          # Inyectar tu icon.png personalizado en las rutas nativas
           if [ -f "juego-repo/icon.png" ]; then
             mkdir -p love-android-src/app/src/main/res/drawable
             cp juego-repo/icon.png love-android-src/app/src/main/res/drawable/ic_launcher.png
@@ -99,7 +97,12 @@ jobs:
             echo "ERROR: Gradle terminó pero no se generó ningún APK." && exit 1
           fi
           
-          zipalign -f -p -v 4 "$RAW_APK" love-aligned.apk > /dev/null
+          # Buscamos la carpeta de herramientas de desarrollo nativas de Android instaladas
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | tail -n 1)
+          echo "Herramientas de Android encontradas en: $BUILD_TOOLS_DIR"
+          
+          # Forzamos el uso de zipalign y apksigner con su ruta absoluta
+          $BUILD_TOOLS_DIR/zipalign -f -p -v 4 "$RAW_APK" love-aligned.apk > /dev/null
 
           keytool -genkey -v \
             -keystore debug.keystore \
@@ -111,7 +114,7 @@ jobs:
             -keypass android \
             -dname "CN=Android Debug, O=Android, C=US" > /dev/null
 
-          apksigner sign \
+          $BUILD_TOOLS_DIR/apksigner sign \
             --ks debug.keystore \
             --ks-pass pass:android \
             --key-pass pass:android \
