@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Instalar dependencias ─────────────────────────────────────────────
-      - name: Instalar imagemagick y zipalign
+      - name: Instalar dependencias
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y imagemagick zipalign apksigner 2>&1
@@ -88,7 +88,7 @@ jobs:
           echo "  -> love-base.apk descargado. ($(du -sh love-base.apk | cut -f1))" >> build-log.txt
           echo ""                                                                     >> build-log.txt
 
-      # ── 6. Reemplazar ícono directamente en el ZIP (sin apktool) ─────────────
+      # ── 6. Reemplazar ícono directamente en el ZIP ───────────────────────────
       - name: Reemplazar ícono en el APK
         run: |
           echo "[ PASO 3 ] Reemplazando ícono..." | tee -a build-log.txt
@@ -99,9 +99,6 @@ jobs:
             cp love-base.apk love-iconic.apk
           else
             cp love-base.apk love-iconic.apk
-
-            echo "  -> Carpetas drawable encontradas en el APK:" >> build-log.txt
-            unzip -l love-iconic.apk | grep "drawable" | grep "love.png" | tee -a build-log.txt
 
             declare -A SIZES=(
               ["res/drawable-mdpi/love.png"]=48
@@ -115,15 +112,12 @@ jobs:
 
             for PATH_IN_APK in "${!SIZES[@]}"; do
               SIZE=${SIZES[$PATH_IN_APK]}
-
               if unzip -l love-iconic.apk | grep -q "$PATH_IN_APK"; then
                 mkdir -p "icon_tmp/$(dirname $PATH_IN_APK)"
                 convert icon.png -resize ${SIZE}x${SIZE} "icon_tmp/$PATH_IN_APK" 2>&1 | tee -a build-log.txt
-
                 cd icon_tmp
                 zip -f ../love-iconic.apk "$PATH_IN_APK" 2>&1 | tee -a ../build-log.txt
                 cd ..
-
                 echo "  -> $PATH_IN_APK → ${SIZE}x${SIZE}px OK" >> build-log.txt
               else
                 echo "  -> $PATH_IN_APK no existe en el APK, omitiendo." >> build-log.txt
@@ -131,44 +125,67 @@ jobs:
             done
 
             rm -rf icon_tmp
-            echo ""                                             >> build-log.txt
-            echo "  -> Ícono procesado."                       >> build-log.txt
+            echo "  -> Ícono procesado." >> build-log.txt
           fi
 
-          echo ""                                              >> build-log.txt
+          echo "" >> build-log.txt
 
-      # ── 7. Zipalign ANTES del cat ────────────────────────────────────────────
-      # El zipalign debe hacerse sobre el APK base limpio ANTES de fusionar
-      # con game.love, porque el cat produce un ZIP que zipalign no reconoce.
-      - name: Zipalign el APK base
+      # ── 7. Insertar game.love dentro del APK con Python ──────────────────────
+      # Se usa Python en lugar de "cat" para preservar la estructura del ZIP
+      # y que apksigner pueda firmar el APK sin errores de formato.
+      - name: Insertar game.love en el APK
         run: |
-          echo "[ PASO 4 ] Zipalign del APK base..." | tee -a build-log.txt
-          echo "-------------------------------------------"   >> build-log.txt
+          echo "[ PASO 4 ] Insertando game.love en el APK con Python..." | tee -a build-log.txt
+          echo "-------------------------------------------"              >> build-log.txt
 
-          zipalign -v 4 love-iconic.apk love-aligned.apk \
+          python3 << 'PYEOF'
+          import zipfile
+          import shutil
+          import os
+
+          src = "love-iconic.apk"
+          dst = "love-with-game.apk"
+          game = "game.love"
+
+          shutil.copy(src, dst)
+
+          with zipfile.ZipFile(dst, "a", compression=zipfile.ZIP_STORED) as zf:
+              zf.write(game, game)
+
+          print(f"  -> game.love insertado correctamente en el APK.")
+          print(f"  -> Tamaño resultante: {os.path.getsize(dst) / 1024 / 1024:.1f} MB")
+          PYEOF
+
+          echo "" >> build-log.txt
+          python3 -c "
+          import zipfile, shutil, os
+          shutil.copy('love-iconic.apk', 'love-with-game.apk')
+          with zipfile.ZipFile('love-with-game.apk', 'a', compression=zipfile.ZIP_STORED) as zf:
+              zf.write('game.love', 'game.love')
+          size = os.path.getsize('love-with-game.apk') / 1024 / 1024
+          print(f'  -> game.love insertado correctamente. ({size:.1f} MB)')
+          " 2>&1 | tee -a build-log.txt
+
+          echo "" >> build-log.txt
+
+      # ── 8. Zipalign ──────────────────────────────────────────────────────────
+      - name: Zipalign
+        run: |
+          echo "[ PASO 5 ] Zipalign..." | tee -a build-log.txt
+          echo "-------------------------------------------" >> build-log.txt
+
+          zipalign -v 4 love-with-game.apk love-aligned.apk \
             2>&1 | tee -a build-log.txt
 
           echo "  -> Zipalign completado. ($(du -sh love-aligned.apk | cut -f1))" >> build-log.txt
-          echo ""                                                                  >> build-log.txt
-
-      # ── 8. Fusionar game.love + APK alineado ─────────────────────────────────
-      - name: Fusionar game.love con APK
-        run: |
-          echo "[ PASO 5 ] Fusionando game.love + APK..." | tee -a build-log.txt
-          echo "-------------------------------------------"  >> build-log.txt
-
-          cat love-aligned.apk game.love > PentagonMan-unsigned.apk
-
-          echo "  -> Fusion completada. ($(du -sh PentagonMan-unsigned.apk | cut -f1))" >> build-log.txt
-          echo ""                                                                        >> build-log.txt
+          echo "" >> build-log.txt
 
       # ── 9. Firmar el APK con firma debug ─────────────────────────────────────
       - name: Firmar APK con firma debug
         run: |
-          echo "[ PASO 6 ] Generando keystore debug y firmando APK..." | tee -a build-log.txt
-          echo "-------------------------------------------"             >> build-log.txt
+          echo "[ PASO 6 ] Firmando APK..." | tee -a build-log.txt
+          echo "-------------------------------------------" >> build-log.txt
 
-          # Generar keystore debug desechable (solo para beta)
           keytool -genkey -v \
             -keystore debug.keystore \
             -alias androiddebugkey \
@@ -180,41 +197,39 @@ jobs:
             -dname "CN=Android Debug, O=Android, C=US" \
             2>&1 | tee -a build-log.txt
 
-          echo "" >> build-log.txt
           echo "  -> Keystore debug generado." >> build-log.txt
 
-          # Firmar con apksigner (el APK ya viene alineado del paso anterior)
           apksigner sign \
             --ks debug.keystore \
             --ks-pass pass:android \
             --key-pass pass:android \
             --ks-key-alias androiddebugkey \
             --out PentagonMan-beta.apk \
-            PentagonMan-unsigned.apk \
+            love-aligned.apk \
             2>&1 | tee -a build-log.txt
 
           echo "" >> build-log.txt
           echo "  -> APK firmado. ($(du -sh PentagonMan-beta.apk | cut -f1))" >> build-log.txt
           echo "" >> build-log.txt
 
-      # ── 10. Verificar integridad y firma del APK ─────────────────────────────
-      - name: Verificar integridad del APK
+      # ── 10. Verificar firma ──────────────────────────────────────────────────
+      - name: Verificar firma del APK
         run: |
-          echo "[ PASO 7 ] Verificando integridad del APK..." | tee -a build-log.txt
-          echo "-------------------------------------------"   >> build-log.txt
+          echo "[ PASO 7 ] Verificando firma..." | tee -a build-log.txt
+          echo "-------------------------------------------" >> build-log.txt
 
           if [ -f "PentagonMan-beta.apk" ] && [ -s "PentagonMan-beta.apk" ]; then
-            echo "  -> APK encontrado y no vacío. OK"          >> build-log.txt
+            echo "  -> APK encontrado y no vacío. OK" >> build-log.txt
           else
-            echo "  -> ERROR: El APK no existe o está vacío."  >> build-log.txt
+            echo "  -> ERROR: El APK no existe o está vacío." >> build-log.txt
             exit 1
           fi
 
           apksigner verify --verbose PentagonMan-beta.apk 2>&1 | tee -a build-log.txt
-          echo ""                                              >> build-log.txt
+          echo "" >> build-log.txt
 
-      # ── 11. Resumen final del log ────────────────────────────────────────────
-      - name: Escribir resumen final en el log
+      # ── 11. Resumen final ────────────────────────────────────────────────────
+      - name: Resumen final
         run: |
           echo "=============================================" >> build-log.txt
           echo "  BUILD COMPLETADO EXITOSAMENTE"              >> build-log.txt
@@ -230,7 +245,7 @@ jobs:
           retention-days: 7
 
       # ── 13. Subir log como artifact ──────────────────────────────────────────
-      - name: Subir log de build como artifact
+      - name: Subir log como artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
