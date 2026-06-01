@@ -1,5 +1,5 @@
 # =============================================================================
-#  build-android.yml - PentagonMan (Edición Rama Master de LÖVE)
+#  build-android.yml - PentagonMan (Edición Compilación Aislada Profesional)
 # =============================================================================
 
 name: Build Android APK (Release)
@@ -14,85 +14,86 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Descargar tu Repositorio y el Megasource de LÖVE (Vía ZIP Master) ──
-      - name: Checkout del proyecto
+      # ── 1. Descargar TU repositorio (Para obtener tu game.love e icon.png) ───
+      - name: Checkout de tu juego
         uses: actions/checkout@v4
+        with:
+          path: juego-repo
 
-      - name: Descargar dependencias nativas (Megasource ZIP)
-        run: |
-          echo "Descargando megasource comprimido oficial de LÖVE2D (Rama Master)..."
-          curl -L https://github.com/love2d/love-android-megasource/archive/refs/heads/master.zip -o megasource.zip
-          
-          echo "Descomprimiendo archivos..."
-          unzip -q megasource.zip
-          
-          echo "Acomodando estructura de carpetas..."
-          # Como bajamos la rama master, la carpeta descomprimida termina en '-master'
-          mv love-android-megasource-master megasource
-          
-          echo "Limpiando archivos temporales..."
-          rm megasource.zip
+      # ── 2. Descargar el LÖVE Android Oficial DIRECTO de la fuente original ──
+      - name: Checkout de LÖVE Android Oficial (Con todos sus submódulos)
+        uses: actions/checkout@v4
+        with:
+          repository: love2d/love-android
+          submodules: recursive  # Esto descarga megasource de forma nativa y perfecta
+          path: love-android-src
 
-      # ── 2. Configurar Java ───────────────────────────────────────────────────
+      # ── 3. Configurar Java ───────────────────────────────────────────────────
       - name: Configurar Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
+          cache-dependency-path: love-android-src/build.gradle
 
-      # ── 3. Configurar Android SDK ────────────────────────────────────────────
+      # ── 4. Configurar Android SDK ────────────────────────────────────────────
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── 4. Inyectar tu juego (game.love) ─────────────────────────────────────
+      # ── 5. Inyectar tu juego (game.love) en el motor oficial ─────────────────
       - name: Preparar assets del juego
         run: |
-          echo "Inyectando game.love en los assets del proyecto..."
-          mkdir -p app/src/main/assets
-          if [ -f "game.love" ]; then
-            cp game.love app/src/main/assets/game.love
+          echo "Inyectando game.love en los assets del proyecto oficial..."
+          mkdir -p love-android-src/app/src/main/assets
+          if [ -f "juego-repo/game.love" ]; then
+            cp juego-repo/game.love love-android-src/app/src/main/assets/game.love
           else
-            echo "ERROR: No se encontró game.love en la raíz" && exit 1
+            echo "ERROR: No se encontró game.love en la raíz de tu repositorio." && exit 1
           fi
 
-      # ── 5. Personalizar Identidad de PentagonMan ──────────────────────────────
+      # ── 6. Personalizar Identidad de PentagonMan ──────────────────────────────
       - name: Personalizar Identidad de PentagonMan
         run: |
           echo "Configurando nombre e íconos oficiales..."
-          SED_TARGET="app/src/main/res/values/strings.xml"
+          
+          # Cambiar el nombre de la app de LÖVE a PentagonMan
+          SED_TARGET="love-android-src/app/src/main/res/values/strings.xml"
           if [ -f "$SED_TARGET" ]; then
             sed -i 's/name="app_name">LÖVE/name="app_name">PentagonMan/g' "$SED_TARGET"
           fi
 
-          if [ -f "icon.png" ]; then
-            mkdir -p app/src/main/res/drawable
-            cp icon.png app/src/main/res/drawable/ic_launcher.png
+          # Inyectar tu icon.png personalizado en las rutas nativas
+          if [ -f "juego-repo/icon.png" ]; then
+            mkdir -p love-android-src/app/src/main/res/drawable
+            cp juego-repo/icon.png love-android-src/app/src/main/res/drawable/ic_launcher.png
             
-            for dir in app/src/main/res/mipmap-*; do
+            for dir in love-android-src/app/src/main/res/mipmap-*; do
               if [ -d "$dir" ]; then
-                cp icon.png "$dir/ic_launcher.png"
-                cp icon.png "$dir/ic_launcher_round.png" 2>/dev/null || true
+                cp juego-repo/icon.png "$dir/ic_launcher.png"
+                cp juego-repo/icon.png "$dir/ic_launcher_round.png" 2>/dev/null || true
               fi
             done
           fi
 
-      # ── 6. Permisos y Limpieza de Gradle ─────────────────────────────────────
+      # ── 7. Permisos y Limpieza de Gradle ─────────────────────────────────────
       - name: Permisos y Limpieza de Gradle
         run: |
+          cd love-android-src
           chmod +x gradlew
           ./gradlew clean
 
-      # ── 7. Compilar el APK con Gradle ────────────────────────────────────────
+      # ── 8. Compilar el APK con Gradle ────────────────────────────────────────
       - name: Compilar APK con Gradle
         run: |
-          ./gradlew assembleEmbedNoRecordRelease -x lint > gradle_build_output.txt 2>&1
+          cd love-android-src
+          ./gradlew assembleEmbedNoRecordRelease -x lint > ../gradle_build_output.txt 2>&1
 
-      # ── 8. Alinear y Firmar el APK Resultante ────────────────────────────────
+      # ── 9. Alinear y Firmar el APK Resultante ────────────────────────────────
       - name: Firmar APK para pruebas masivas
         if: success()
         run: |
-          RAW_APK=$(find app/build/outputs/apk/ -name "*.apk" | head -n 1)
+          RAW_APK=$(find love-android-src/app/build/outputs/apk/ -name "*.apk" | head -n 1)
           
           if [ -z "$RAW_APK" ]; then
             echo "ERROR: Gradle terminó pero no se generó ningún APK." && exit 1
@@ -118,7 +119,7 @@ jobs:
             --out PentagonMan-Lanzamiento.apk \
             love-aligned.apk
 
-      # ── 9. Guardar Reporte de Errores de Gradle (Solo si falla) ──────────────
+      # ── 10. Guardar Reporte de Errores de Gradle (Solo si falla) ─────────────
       - name: Guardar Reporte de Errores de Gradle
         if: failure()
         uses: actions/upload-artifact@v4
@@ -127,7 +128,7 @@ jobs:
           path: gradle_build_output.txt
           retention-days: 3
 
-      # ── 10. Guardar y Exportar el APK final ──────────────────────────────────
+      # ── 11. Guardar y Exportar el APK final ──────────────────────────────────
       - name: Subir APK Final
         if: success()
         uses: actions/upload-artifact@v4
