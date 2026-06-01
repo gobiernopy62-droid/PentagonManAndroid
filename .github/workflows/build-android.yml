@@ -72,7 +72,7 @@ jobs:
           echo "  -> love-base.apk descargado. ($(du -sh love-base.apk | cut -f1))" >> build-log.txt
           echo "" >> build-log.txt
 
-      # ── 6. Reemplazar ícono Dinámicamente ────────────────────────────────────
+      # ── 6. Reemplazar ícono Dinámicamente (Versión Robusta con Python) ────────
       - name: Reemplazar ícono en el APK
         run: |
           echo "[ PASO 3 ] Reemplazando ícono..." | tee -a build-log.txt
@@ -83,28 +83,43 @@ jobs:
           if [ -f "icon.png" ]; then
             mkdir -p icon_tmp
             
-            # Buscar todos los íconos de LÖVE dentro del APK
-            ICON_PATHS=$(unzip -l love-iconic.apk | awk '{print $4}' | grep '^res/.*\.png$' | grep -iE 'love\.png|ic_launcher\.png')
+            # Buscar todos los íconos de LÖVE dentro del APK de forma segura
+            ICON_PATHS=$(unzip -l love-iconic.apk | awk '{print $4}' | grep '^res/.*\.png$' | grep -iE 'love\.png|ic_launcher\.png' || true)
             
-            for path in $ICON_PATHS; do
-              # Extraer ícono original para saber su tamaño
-              unzip -p love-iconic.apk "$path" > temp_icon.png
-              DIMENSIONS=$(identify -format "%wx%h" temp_icon.png)
-              
-              # Crear estructura de carpetas y redimensionar nuestro ícono
-              mkdir -p "icon_tmp/$(dirname "$path")"
-              convert icon.png -resize $DIMENSIONS "icon_tmp/$path"
-              
-              # Meter el ícono redimensionado de vuelta al APK
-              cd icon_tmp
-              zip -u ../love-iconic.apk "$path" > /dev/null
-              cd ..
-              
-              echo "  -> Reemplazado: $path ($DIMENSIONS)" >> build-log.txt
-            done
+            if [ -z "$ICON_PATHS" ]; then
+              echo "  -> No se detectaron íconos modificables en las rutas res/ estándar." >> build-log.txt
+            else
+              for path in $ICON_PATHS; do
+                # Extraer ícono original
+                unzip -p love-iconic.apk "$path" > temp_icon.png 2>/dev/null || continue
+                
+                # Obtener dimensiones usando un script rápido de Python integrado en lugar de 'identify'
+                DIMENSIONS=$(python3 -c "
+                import struct
+                with open('temp_icon.png', 'rb') as f:
+                    data = f.read(24)
+                    if data[:8] == b'\x89PNG\r\n\x1a\n' and data[12:16] == b'IHDR':
+                        w, h = struct.unpack('>II', data[16:24])
+                        print(f'{w}x{h}')
+                    else:
+                        print('144x144') # Valor por defecto seguro si falla la lectura
+                " 2>/dev/null || echo "144x144")
+
+                # Crear estructura de carpetas y redimensionar nuestro ícono
+                mkdir -p "icon_tmp/$(dirname "$path")"
+                convert icon.png -resize $DIMENSIONS "icon_tmp/$path" 2>/dev/null || continue
+                
+                # Meter el ícono redimensionado de vuelta al APK
+                cd icon_tmp
+                zip -u ../love-iconic.apk "$path" > /dev/null 2>&1
+                cd ..
+                
+                echo "  -> Reemplazado con éxito: $path ($DIMENSIONS)" >> build-log.txt
+              done
+            fi
             
-            rm -rf icon_tmp temp_icon.png
-            echo "  -> Íconos actualizados exitosamente." >> build-log.txt
+            rm -rf icon_tmp temp_icon.png 2>/dev/null
+            echo "  -> Proceso de íconos finalizado." >> build-log.txt
           else
             echo "  -> Sin icon.png, se omite este paso." >> build-log.txt
           fi
@@ -118,11 +133,11 @@ jobs:
 
           cp love-iconic.apk love-with-game.apk
           
-          # Android y LÖVE requieren que el juego esté en la carpeta "assets"
+          # Crear la carpeta assets estructurada para Android
           mkdir -p assets
           cp game.love assets/game.love
           
-          # Se inserta sin comprimir (-0) para no romper Zipalign
+          # Se inserta de manera cruda (-0) para garantizar que Zipalign funcione
           zip -0 -u love-with-game.apk assets/game.love > /dev/null
 
           echo "  -> game.love insertado en assets/game.love." >> build-log.txt
@@ -135,7 +150,7 @@ jobs:
           echo "[ PASO 5 ] Zipalign..." | tee -a build-log.txt
           echo "-------------------------------------------" >> build-log.txt
 
-          # -p asegura la alineación de página (crítico para .so) y -f fuerza la reescritura
+          # -p alinea las páginas de memoria (indispensable para Android moderno)
           zipalign -f -p -v 4 love-with-game.apk love-aligned.apk > zipalign_output.txt 2>&1
           
           if grep -q "Verification FAILED" zipalign_output.txt; then
