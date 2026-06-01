@@ -1,5 +1,5 @@
 # =============================================================================
-#  build-android.yml - PentagonMan (Edición Descarga Directa ZIP)
+#  build-android.yml - PentagonMan (Edición Sintaxis Corregida)
 # =============================================================================
 
 name: Build Android APK (Release)
@@ -18,7 +18,7 @@ jobs:
       - name: Checkout del proyecto
         uses: actions/checkout@v4
 
-       Cavar la carpeta megasource mediante descarga directa para evitar bloqueos de git
+      # Descargar la carpeta megasource mediante descarga directa para evitar bloqueos de git
       - name: Descargar dependencias nativas (Megasource ZIP)
         run: |
           echo "Descargando megasource comprimido oficial de LÖVE2D..."
@@ -28,7 +28,6 @@ jobs:
           unzip -q megasource.zip
           
           echo "Acomodando estructura de carpetas..."
-          # GitHub comprime la carpeta como 'love-android-megasource-main', la renombramos al estándar
           mv love-android-megasource-main megasource
           
           echo "Limpiando archivos temporales..."
